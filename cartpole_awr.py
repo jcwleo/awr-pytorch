@@ -132,7 +132,7 @@ def discount_return(reward, done, value):
 
     gae = 0
     for t in range(num_step - 1, -1, -1):
-        if dones[t]:
+        if done[t]:
             delta = reward[t] - value[t]
         else:
             delta = reward[t] + gamma * value[t + 1] - value[t]
