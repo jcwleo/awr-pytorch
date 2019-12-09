@@ -22,12 +22,18 @@ class GuaussianAction(nn.Module):
 
         super().__init__()
         self.fc_mean = nn.Linear(size_in, size_out)
+        
+        # ====== INITIALIZATION ======
+        init.kaiming_uniform_(self.fc_mean.weight, a=1.0)
+        self.fc_mean.bias.data.zero_()
+
         self.logstd = nn.Parameter(torch.zeros(1, size_out))
 
 
     def forward(self, x): 
 
         action_mean = self.fc_mean(x)
+
         # print(action_mean.shape, self.logstd.shape)
         return FixedNormal(action_mean, self.logstd.exp())
 
@@ -127,14 +133,14 @@ class BaseActorCriticNetwork(nn.Module):
             linear(64, 1)
         )
 
-        # for p in self.modules():
-        #     if isinstance(p, nn.Conv2d):
-        #         init.kaiming_uniform_(p.weight)
-        #         p.bias.data.zero_()
-        #
-        #     if isinstance(p, nn.Linear):
-        #         init.kaiming_uniform_(p.weight, a=1.0)
-        #         p.bias.data.zero_()
+        for p in self.modules():
+            if isinstance(p, nn.Conv2d):
+                init.kaiming_uniform_(p.weight)
+                p.bias.data.zero_()
+        
+            if isinstance(p, nn.Linear):
+                init.kaiming_uniform_(p.weight, a=1.0)
+                p.bias.data.zero_()
 
     def forward(self, state):
         # x = self.feature(state)
