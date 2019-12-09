@@ -120,9 +120,9 @@ class BaseActorCriticNetwork(nn.Module):
         # )
         self.actor = nn.Sequential(
             linear(input_size, 128),
-            nn.ReLU(),
+            nn.Tanh(),
             linear(128, 64),
-            nn.ReLU(),
+            nn.Tanh(),
             GuaussianAction(64, output_size) if use_continuous else linear(64, output_size)
         )
         self.critic = nn.Sequential(
@@ -135,11 +135,11 @@ class BaseActorCriticNetwork(nn.Module):
 
         for p in self.modules():
             if isinstance(p, nn.Conv2d):
-                init.kaiming_uniform_(p.weight)
+                init.xavier_normal_(p.weight)
                 p.bias.data.zero_()
         
             if isinstance(p, nn.Linear):
-                init.kaiming_uniform_(p.weight, a=1.0)
+                init.xavier_normal_(p.weight)
                 p.bias.data.zero_()
 
     def forward(self, state):
