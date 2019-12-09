@@ -87,8 +87,9 @@ class ActorAgent(object):
         self.model = self.model.to(self.device)
 
     def get_action(self, state):
-        state = torch.Tensor(state).to(self.device)
-        state = state.float()
+        # state = torch.Tensor(state).to(self.device).reshape(1,-1)
+        # state = state.float()
+        state = torch.tensor(state).float().reshape(1,-1)
         policy, value = self.model(state)
 
         if self.continuous_agent: 
@@ -117,6 +118,9 @@ class ActorAgent(object):
         for _ in range(critic_update_iter):
             sample_idx = random.sample(range(data_len), 256)
             sample_value = self.model.critic(torch.FloatTensor(s_batch[sample_idx]))
+            if(torch.sum(torch.isnan(sample_value)) > 0): 
+                print('NaN in value prediction')
+                input()
             critic_loss = mse(sample_value.squeeze(), torch.FloatTensor(discounted_reward[sample_idx]))
             critic_loss.backward()
             self.critic_optimizer.step()
@@ -126,6 +130,8 @@ class ActorAgent(object):
         cur_value = self.model.critic(torch.FloatTensor(s_batch))
         print('After opt - Value has nan: {}'.format(torch.sum(torch.isnan(cur_value))))
         discounted_reward, adv = discount_return(reward_batch, done_batch, cur_value.cpu().detach().numpy())
+        print('Advantage has nan: {}'.format(torch.sum(torch.isnan(torch.tensor(adv).float()))))
+        print('Returns has nan: {}'.format(torch.sum(torch.isnan(torch.tensor(discounted_reward).float()))))
         # adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         self.actor_optimizer.zero_grad()
         for _ in range(actor_update_iter):
@@ -134,7 +140,7 @@ class ActorAgent(object):
             cur_policy = self.model.actor(torch.FloatTensor(s_batch[sample_idx]))
             
             if self.continuous_agent: 
-                probs = cur_policy.log_probs(torch.tensor(action_batch[sample_idx]).float())
+                probs = -cur_policy.log_probs(torch.tensor(action_batch[sample_idx]).float())
                 actor_loss = probs * weight
             else: 
                 m = Categorical(F.softmax(cur_policy, dim=-1))
@@ -142,6 +148,7 @@ class ActorAgent(object):
 
 
             actor_loss = actor_loss.mean()
+            # print(actor_loss)
 
 
             actor_loss.backward()
@@ -174,8 +181,8 @@ def discount_return(reward, done, value):
 if __name__ == '__main__':
     # env_id = 'CartPole-v1'
     # env_id = 'Pendulum-v0'
-    env_id = 'Acrobot-v1'
-    # env_id = 'BipedalWalker-v2'
+    # env_id = 'Acrobot-v1'
+    env_id = 'BipedalWalker-v2'
 
     env = gym.make(env_id)
 
@@ -229,7 +236,9 @@ if __name__ == '__main__':
         while True:
             step += 1
             action = agent.get_action(state)
-
+            if(torch.sum(torch.isnan(torch.tensor(action).float()))): 
+                print(action)
+                action = np.zeros_like(action)
             next_state, reward, done, info = env.step(action)
             states.append(np.array(state))
             actions.append(action)
