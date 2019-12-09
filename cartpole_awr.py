@@ -7,9 +7,11 @@ from torch.multiprocessing import Process
 from model import *
 
 
-class CartPoleEnvironment(Process):
+class RLEnv(Process):
     def __init__(self, env_id, is_render):
-        super(CartPoleEnvironment, self).__init__()
+
+        super(RLEnv, self).__init__()
+        
         self.daemon = True
         self.env = gym.make(env_id)
 
@@ -58,9 +60,12 @@ class ActorAgent(object):
             lam=0.95,
             use_gae=True,
             use_cuda=False,
-            use_noisy_net=False):
+            use_noisy_net=False, 
+            use_continuous = False):
         self.model = BaseActorCriticNetwork(
-            input_size, output_size, use_noisy_net)
+            input_size, output_size, use_noisy_net, use_continuous = use_continuous)
+        self.continuous_agent = use_continuous
+        
         self.output_size = output_size
         self.input_size = input_size
         self.gamma = gamma
@@ -77,9 +82,12 @@ class ActorAgent(object):
         state = torch.Tensor(state).to(self.device)
         state = state.float()
         policy, value = self.model(state)
-        policy = F.softmax(policy, dim=-1).data.cpu().numpy()
 
-        action = np.random.choice(np.arange(self.output_size), p=policy)
+        if self.continuous_agent: 
+            action = policy.sample().numpy().reshape(-1)
+        else: 
+            policy = F.softmax(policy, dim=-1).data.cpu().numpy()
+            action = np.random.choice(np.arange(self.output_size), p=policy)
 
         return action
 
@@ -112,13 +120,19 @@ class ActorAgent(object):
         self.actor_optimizer.zero_grad()
         for _ in range(actor_update_iter):
             sample_idx = random.sample(range(data_len), 256)
-            cur_policy = self.model.actor(torch.FloatTensor(s_batch[sample_idx]))
-            m = Categorical(F.softmax(cur_policy, dim=-1))
-
             weight = np.minimum(np.exp(adv[sample_idx] / beta), max_weight)
+            cur_policy = self.model.actor(torch.FloatTensor(s_batch[sample_idx]))
+            
+            if self.continuous_agent: 
+                probs = cur_policy.log_probs(torch.tensor(action_batch[sample_idx]).float())
+                actor_loss = probs * torch.tensor(weight).float().reshape(-1,1)
+            else: 
+                m = Categorical(F.softmax(cur_policy, dim=-1))
+                actor_loss = -m.log_prob(torch.LongTensor(action_batch[sample_idx])) * torch.FloatTensor(weight)
 
-            actor_loss = -m.log_prob(torch.LongTensor(action_batch[sample_idx])) * torch.FloatTensor(weight)
+
             actor_loss = actor_loss.mean()
+
 
             actor_loss.backward()
             self.actor_optimizer.step()
@@ -146,10 +160,15 @@ def discount_return(reward, done, value):
 
 
 if __name__ == '__main__':
-    env_id = 'CartPole-v1'
+    # env_id = 'CartPole-v1'
+    env_id = 'Pendulum-v0'
+
     env = gym.make(env_id)
+
+    continuous = isinstance(env.action_space, gym.spaces.Box)
+
     input_size = env.observation_space.shape[0]  # 4
-    output_size = env.action_space.n  # 2
+    output_size = env.action_space.shape[0] if continuous else env.action_space.n  # 2
     env.close()
 
     use_cuda = False
@@ -173,10 +192,11 @@ if __name__ == '__main__':
         gamma,
         use_gae=use_gae,
         use_cuda=use_cuda,
-        use_noisy_net=use_noisy_net)
+        use_noisy_net=use_noisy_net, 
+        use_continuous=continuous)
     is_render = False
 
-    env = CartPoleEnvironment(env_id, is_render)
+    env = RLEnv(env_id, is_render)
 
     states, actions, rewards, next_states, dones = deque(maxlen=max_replay), deque(maxlen=max_replay), deque(
         maxlen=max_replay), deque(maxlen=max_replay), deque(maxlen=max_replay)
