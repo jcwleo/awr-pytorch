@@ -114,7 +114,7 @@ class ActorAgent(object):
         cur_value = self.model.critic(torch.FloatTensor(s_batch))
         print('Before opt - Value has nan: {}'.format(torch.sum(torch.isnan(cur_value))))
         discounted_reward, _ = discount_return(reward_batch, done_batch, cur_value.cpu().detach().numpy())
-        # discounted_reward = (discounted_reward - discounted_reward.mean())/(discounted_reward.std() + 1e-8)
+        discounted_reward = (discounted_reward - discounted_reward.mean())/(discounted_reward.std() + 1e-8)
         for _ in range(critic_update_iter):
             sample_idx = random.sample(range(data_len), 256)
             sample_value = self.model.critic(torch.FloatTensor(s_batch[sample_idx]))
@@ -180,9 +180,9 @@ def discount_return(reward, done, value):
 
 if __name__ == '__main__':
     # env_id = 'CartPole-v1'
-    # env_id = 'Pendulum-v0'
+    env_id = 'Pendulum-v0'
     # env_id = 'Acrobot-v1'
-    env_id = 'BipedalWalker-v2'
+    # env_id = 'BipedalWalker-v2'
 
     env = gym.make(env_id)
 
