@@ -29,6 +29,14 @@ class RLEnv(Process):
             self.env.render()
 
         obs, reward, done, info = self.env.step(action)
+
+        # try: 
+        # obs, reward, done, info = self.env.step(action)
+        # except: 
+        #     input(action)
+        #     obs, reward, done, info = self.env.step(action)
+
+
         self.rall += reward
         self.steps += 1
 
@@ -103,6 +111,7 @@ class ActorAgent(object):
         # update critic
         self.critic_optimizer.zero_grad()
         cur_value = self.model.critic(torch.FloatTensor(s_batch))
+        print('Before opt - Value has nan: {}'.format(torch.sum(torch.isnan(cur_value))))
         discounted_reward, _ = discount_return(reward_batch, done_batch, cur_value.cpu().detach().numpy())
         # discounted_reward = (discounted_reward - discounted_reward.mean())/(discounted_reward.std() + 1e-8)
         for _ in range(critic_update_iter):
@@ -115,20 +124,21 @@ class ActorAgent(object):
 
         # update actor
         cur_value = self.model.critic(torch.FloatTensor(s_batch))
+        print('After opt - Value has nan: {}'.format(torch.sum(torch.isnan(cur_value))))
         discounted_reward, adv = discount_return(reward_batch, done_batch, cur_value.cpu().detach().numpy())
         # adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         self.actor_optimizer.zero_grad()
         for _ in range(actor_update_iter):
             sample_idx = random.sample(range(data_len), 256)
-            weight = np.minimum(np.exp(adv[sample_idx] / beta), max_weight)
+            weight = torch.tensor(np.minimum(np.exp(adv[sample_idx] / beta), max_weight)).float().reshape(-1,1)
             cur_policy = self.model.actor(torch.FloatTensor(s_batch[sample_idx]))
             
             if self.continuous_agent: 
                 probs = cur_policy.log_probs(torch.tensor(action_batch[sample_idx]).float())
-                actor_loss = probs * torch.tensor(weight).float().reshape(-1,1)
+                actor_loss = probs * weight
             else: 
                 m = Categorical(F.softmax(cur_policy, dim=-1))
-                actor_loss = -m.log_prob(torch.LongTensor(action_batch[sample_idx])) * torch.FloatTensor(weight)
+                actor_loss = -m.log_prob(torch.LongTensor(action_batch[sample_idx])) * weight.reshape(-1)
 
 
             actor_loss = actor_loss.mean()
@@ -137,6 +147,8 @@ class ActorAgent(object):
             actor_loss.backward()
             self.actor_optimizer.step()
             self.actor_optimizer.zero_grad()
+
+        print('Weight has nan {}'.format(torch.sum(torch.isnan(weight))))
 
 
 def discount_return(reward, done, value):
@@ -160,12 +172,15 @@ def discount_return(reward, done, value):
 
 
 if __name__ == '__main__':
-    env_id = 'CartPole-v1'
+    # env_id = 'CartPole-v1'
     # env_id = 'Pendulum-v0'
+    env_id = 'Acrobot-v1'
+    # env_id = 'BipedalWalker-v2'
 
     env = gym.make(env_id)
 
     continuous = isinstance(env.action_space, gym.spaces.Box)
+    print('Env is continuous: {}'.format(continuous))
 
     input_size = env.observation_space.shape[0]  # 4
     output_size = env.action_space.shape[0] if continuous else env.action_space.n  # 2
