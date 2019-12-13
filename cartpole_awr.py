@@ -2,6 +2,10 @@ import random
 from collections import deque
 
 import gym
+import numpy as np
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.distributions.categorical import Categorical
 from torch.multiprocessing import Process
 
 from model import *
@@ -11,7 +15,7 @@ class RLEnv(Process):
     def __init__(self, env_id, is_render):
 
         super(RLEnv, self).__init__()
-        
+
         self.daemon = True
         self.env = gym.make(env_id)
 
@@ -35,7 +39,6 @@ class RLEnv(Process):
         # except: 
         #     input(action)
         #     obs, reward, done, info = self.env.step(action)
-
 
         self.rall += reward
         self.steps += 1
@@ -68,35 +71,36 @@ class ActorAgent(object):
             lam=0.95,
             use_gae=True,
             use_cuda=False,
-            use_noisy_net=False, 
-            use_continuous = False):
+            use_noisy_net=False,
+            use_continuous=False):
         self.model = BaseActorCriticNetwork(
-            input_size, output_size, use_noisy_net, use_continuous = use_continuous)
+            input_size, output_size, use_noisy_net, use_continuous=use_continuous)
         self.continuous_agent = use_continuous
-        
+
         self.output_size = output_size
         self.input_size = input_size
         self.gamma = gamma
         self.lam = lam
         self.use_gae = use_gae
-        self.actor_optimizer = optim.SGD(self.model.actor.parameters(),
-                                         0.00005, momentum=0.9)
-        self.critic_optimizer = optim.SGD(self.model.critic.parameters(),
-                                          0.001, momentum=0.9)
+
+        self.actor_optimizer = optim.Adam(self.model.actor.parameters(),
+                                          0.0001)
+        self.critic_optimizer = optim.Adam(self.model.critic.parameters(),
+                                           0.001)
         self.device = torch.device('cuda' if use_cuda else 'cpu')
         self.model = self.model.to(self.device)
 
     def get_action(self, state):
         # state = torch.Tensor(state).to(self.device).reshape(1,-1)
         # state = state.float()
-        state = torch.tensor(state).float().reshape(1,-1)
+        state = torch.tensor(state).float().reshape(1, -1)
         policy, value = self.model(state)
 
-        if self.continuous_agent: 
+        if self.continuous_agent:
             action = policy.sample().numpy().reshape(-1)
-        else: 
+        else:
             policy = F.softmax(policy, dim=-1).data.cpu().numpy()
-            action = np.random.choice(np.arange(self.output_size), p=policy)
+            action = np.random.choice(np.arange(self.output_size), p=policy[0])
 
         return action
 
@@ -114,11 +118,11 @@ class ActorAgent(object):
         cur_value = self.model.critic(torch.FloatTensor(s_batch))
         print('Before opt - Value has nan: {}'.format(torch.sum(torch.isnan(cur_value))))
         discounted_reward, _ = discount_return(reward_batch, done_batch, cur_value.cpu().detach().numpy())
-        discounted_reward = (discounted_reward - discounted_reward.mean())/(discounted_reward.std() + 1e-8)
+        # discounted_reward = (discounted_reward - discounted_reward.mean())/(discounted_reward.std() + 1e-8)
         for _ in range(critic_update_iter):
             sample_idx = random.sample(range(data_len), 256)
             sample_value = self.model.critic(torch.FloatTensor(s_batch[sample_idx]))
-            if(torch.sum(torch.isnan(sample_value)) > 0): 
+            if (torch.sum(torch.isnan(sample_value)) > 0):
                 print('NaN in value prediction')
                 input()
             critic_loss = mse(sample_value.squeeze(), torch.FloatTensor(discounted_reward[sample_idx]))
@@ -136,20 +140,18 @@ class ActorAgent(object):
         self.actor_optimizer.zero_grad()
         for _ in range(actor_update_iter):
             sample_idx = random.sample(range(data_len), 256)
-            weight = torch.tensor(np.minimum(np.exp(adv[sample_idx] / beta), max_weight)).float().reshape(-1,1)
+            weight = torch.tensor(np.minimum(np.exp(adv[sample_idx] / beta), max_weight)).float().reshape(-1, 1)
             cur_policy = self.model.actor(torch.FloatTensor(s_batch[sample_idx]))
-            
-            if self.continuous_agent: 
+
+            if self.continuous_agent:
                 probs = -cur_policy.log_probs(torch.tensor(action_batch[sample_idx]).float())
                 actor_loss = probs * weight
-            else: 
+            else:
                 m = Categorical(F.softmax(cur_policy, dim=-1))
                 actor_loss = -m.log_prob(torch.LongTensor(action_batch[sample_idx])) * weight.reshape(-1)
 
-
             actor_loss = actor_loss.mean()
             # print(actor_loss)
-
 
             actor_loss.backward()
             self.actor_optimizer.step()
@@ -214,7 +216,7 @@ if __name__ == '__main__':
         gamma,
         use_gae=use_gae,
         use_cuda=use_cuda,
-        use_noisy_net=use_noisy_net, 
+        use_noisy_net=use_noisy_net,
         use_continuous=continuous)
     is_render = False
 
@@ -236,7 +238,7 @@ if __name__ == '__main__':
         while True:
             step += 1
             action = agent.get_action(state)
-            if(torch.sum(torch.isnan(torch.tensor(action).float()))): 
+            if (torch.sum(torch.isnan(torch.tensor(action).float()))):
                 print(action)
                 action = np.zeros_like(action)
             next_state, reward, done, info = env.step(action)

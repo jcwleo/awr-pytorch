@@ -1,37 +1,44 @@
-import torch.nn.functional as F
-import torch.nn as nn
-import torch
-import torch.optim as optim
-import numpy as np
 import math
-from torch.nn import init
-from torch.distributions.categorical import Categorical
+
+import torch
+import torch.nn as nn
 from torch.distributions import Normal
+from torch.nn import init
 
 FixedNormal = Normal
 log_prob_normal = FixedNormal.log_prob
-FixedNormal.log_probs = lambda self, actions : log_prob_normal(self, actions).sum(-1, keepdim = True)
+FixedNormal.log_probs = lambda self, actions: log_prob_normal(self, actions).sum(-1, keepdim=True)
 entropy = FixedNormal.entropy
-FixedNormal.entropy = lambda self : entropy(self).sum(-1)
+FixedNormal.entropy = lambda self: entropy(self).sum(-1)
 FixedNormal.mode = lambda self: self.mean
+
+
+def silu(input):
+    return input * torch.sigmoid(input)
+
+
+class SiLU(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, input):
+        return silu(input)
 
 
 class GuaussianAction(nn.Module):
 
     def __init__(self, size_in, size_out):
-
         super().__init__()
         self.fc_mean = nn.Linear(size_in, size_out)
-        
+
         # ====== INITIALIZATION ======
-        init.kaiming_uniform_(self.fc_mean.weight, a=1.0)
-        self.fc_mean.bias.data.zero_()
+        self.fc_mean.weight.data.mul_(0.1)
+        self.fc_mean.bias.data.mul_(0.0)
 
-        self.logstd = nn.Parameter(torch.zeros(1, size_out))
+        self.logstd = torch.zeros(1, size_out)
 
-
-    def forward(self, x): 
-
+    def forward(self, x):
         action_mean = self.fc_mean(x)
 
         # print(action_mean.shape, self.logstd.shape)
@@ -93,8 +100,8 @@ class NoisyLinear(nn.Module):
 
     def __repr__(self):
         return self.__class__.__name__ + '(' \
-            + 'in_features=' + str(self.in_features) \
-            + ', out_features=' + str(self.out_features) + ')'
+               + 'in_features=' + str(self.in_features) \
+               + ', out_features=' + str(self.out_features) + ')'
 
 
 class Flatten(nn.Module):
@@ -103,7 +110,7 @@ class Flatten(nn.Module):
 
 
 class BaseActorCriticNetwork(nn.Module):
-    def __init__(self, input_size, output_size, use_noisy_net=False, use_continuous = False):
+    def __init__(self, input_size, output_size, use_noisy_net=False, use_continuous=False):
         super(BaseActorCriticNetwork, self).__init__()
         if use_noisy_net:
             linear = NoisyLinear
@@ -119,17 +126,17 @@ class BaseActorCriticNetwork(nn.Module):
         #     nn.ReLU()
         # )
         self.actor = nn.Sequential(
-            linear(input_size, 128),
-            nn.Tanh(),
-            linear(128, 64),
-            nn.Tanh(),
+            linear(input_size, 64),
+            SiLU(),
+            linear(64, 64),
+            SiLU(),
             GuaussianAction(64, output_size) if use_continuous else linear(64, output_size)
         )
         self.critic = nn.Sequential(
-            linear(input_size, 128),
-            nn.ReLU(),
-            linear(128, 64),
-            nn.ReLU(),
+            linear(input_size, 64),
+            SiLU(),
+            linear(64, 64),
+            SiLU(),
             linear(64, 1)
         )
 
@@ -137,7 +144,7 @@ class BaseActorCriticNetwork(nn.Module):
             if isinstance(p, nn.Conv2d):
                 init.xavier_normal_(p.weight)
                 p.bias.data.zero_()
-        
+
             if isinstance(p, nn.Linear):
                 init.xavier_normal_(p.weight)
                 p.bias.data.zero_()
