@@ -83,10 +83,10 @@ class ActorAgent(object):
         self.lam = lam
         self.use_gae = use_gae
 
-        self.actor_optimizer = optim.Adam(self.model.actor.parameters(),
-                                          0.0001)
-        self.critic_optimizer = optim.Adam(self.model.critic.parameters(),
-                                           0.001)
+        self.actor_optimizer = optim.SGD(self.model.actor.parameters(),
+                                          lr=0.00005, momentum=0.9)
+        self.critic_optimizer = optim.SGD(self.model.critic.parameters(),
+                                           lr=0.0001, momentum=0.9)
         self.device = torch.device('cuda' if use_cuda else 'cpu')
         self.model = self.model.to(self.device)
 
@@ -183,6 +183,7 @@ def discount_return(reward, done, value):
 if __name__ == '__main__':
     # env_id = 'CartPole-v1'
     env_id = 'Pendulum-v0'
+    # env_id = 'LunarLanderContinuous-v2'
     # env_id = 'Acrobot-v1'
     # env_id = 'BipedalWalker-v2'
 
@@ -206,7 +207,7 @@ if __name__ == '__main__':
 
     gamma = 0.99
     lam = 0.95
-    beta = 1.0
+    beta = 0.05
     max_weight = 20.0
     use_gae = True
 

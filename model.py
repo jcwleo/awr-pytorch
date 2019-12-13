@@ -13,17 +13,16 @@ FixedNormal.entropy = lambda self: entropy(self).sum(-1)
 FixedNormal.mode = lambda self: self.mean
 
 
-def silu(input):
-    return input * torch.sigmoid(input)
-
-
 class SiLU(nn.Module):
 
     def __init__(self):
         super().__init__()
 
+    def silu(input):
+        return input * torch.sigmoid(input)
+
     def forward(self, input):
-        return silu(input)
+        return self.silu(input)
 
 
 class GuaussianAction(nn.Module):
@@ -126,17 +125,17 @@ class BaseActorCriticNetwork(nn.Module):
         #     nn.ReLU()
         # )
         self.actor = nn.Sequential(
-            linear(input_size, 64),
-            SiLU(),
-            linear(64, 64),
-            SiLU(),
+            linear(input_size, 128),
+            nn.ReLU(),
+            linear(128, 64),
+            nn.ReLU(),
             GuaussianAction(64, output_size) if use_continuous else linear(64, output_size)
         )
         self.critic = nn.Sequential(
-            linear(input_size, 64),
-            SiLU(),
-            linear(64, 64),
-            SiLU(),
+            linear(input_size, 128),
+            nn.ReLU(),
+            linear(128, 64),
+            nn.ReLU(),
             linear(64, 1)
         )
 
