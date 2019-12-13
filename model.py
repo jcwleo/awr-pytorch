@@ -5,8 +5,37 @@ import torch.optim as optim
 import numpy as np
 import math
 from torch.nn import init
-
 from torch.distributions.categorical import Categorical
+from torch.distributions import Normal
+
+FixedNormal = Normal
+log_prob_normal = FixedNormal.log_prob
+FixedNormal.log_probs = lambda self, actions : log_prob_normal(self, actions).sum(-1, keepdim = True)
+entropy = FixedNormal.entropy
+FixedNormal.entropy = lambda self : entropy(self).sum(-1)
+FixedNormal.mode = lambda self: self.mean
+
+
+class GuaussianAction(nn.Module):
+
+    def __init__(self, size_in, size_out):
+
+        super().__init__()
+        self.fc_mean = nn.Linear(size_in, size_out)
+        
+        # ====== INITIALIZATION ======
+        init.kaiming_uniform_(self.fc_mean.weight, a=1.0)
+        self.fc_mean.bias.data.zero_()
+
+        self.logstd = nn.Parameter(torch.zeros(1, size_out))
+
+
+    def forward(self, x): 
+
+        action_mean = self.fc_mean(x)
+
+        # print(action_mean.shape, self.logstd.shape)
+        return FixedNormal(action_mean, self.logstd.exp())
 
 
 class NoisyLinear(nn.Module):
@@ -74,12 +103,14 @@ class Flatten(nn.Module):
 
 
 class BaseActorCriticNetwork(nn.Module):
-    def __init__(self, input_size, output_size, use_noisy_net=False):
+    def __init__(self, input_size, output_size, use_noisy_net=False, use_continuous = False):
         super(BaseActorCriticNetwork, self).__init__()
         if use_noisy_net:
             linear = NoisyLinear
         else:
             linear = nn.Linear
+
+        self.use_continuous = use_continuous
 
         # self.feature = nn.Sequential(
         #     linear(input_size, 128),
@@ -89,10 +120,10 @@ class BaseActorCriticNetwork(nn.Module):
         # )
         self.actor = nn.Sequential(
             linear(input_size, 128),
-            nn.ReLU(),
+            nn.Tanh(),
             linear(128, 64),
-            nn.ReLU(),
-            linear(64, output_size)
+            nn.Tanh(),
+            GuaussianAction(64, output_size) if use_continuous else linear(64, output_size)
         )
         self.critic = nn.Sequential(
             linear(input_size, 128),
@@ -102,14 +133,14 @@ class BaseActorCriticNetwork(nn.Module):
             linear(64, 1)
         )
 
-        # for p in self.modules():
-        #     if isinstance(p, nn.Conv2d):
-        #         init.kaiming_uniform_(p.weight)
-        #         p.bias.data.zero_()
-        #
-        #     if isinstance(p, nn.Linear):
-        #         init.kaiming_uniform_(p.weight, a=1.0)
-        #         p.bias.data.zero_()
+        for p in self.modules():
+            if isinstance(p, nn.Conv2d):
+                init.xavier_normal_(p.weight)
+                p.bias.data.zero_()
+        
+            if isinstance(p, nn.Linear):
+                init.xavier_normal_(p.weight)
+                p.bias.data.zero_()
 
     def forward(self, state):
         # x = self.feature(state)

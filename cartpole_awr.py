@@ -7,9 +7,11 @@ from torch.multiprocessing import Process
 from model import *
 
 
-class CartPoleEnvironment(Process):
+class RLEnv(Process):
     def __init__(self, env_id, is_render):
-        super(CartPoleEnvironment, self).__init__()
+
+        super(RLEnv, self).__init__()
+        
         self.daemon = True
         self.env = gym.make(env_id)
 
@@ -27,6 +29,14 @@ class CartPoleEnvironment(Process):
             self.env.render()
 
         obs, reward, done, info = self.env.step(action)
+
+        # try: 
+        # obs, reward, done, info = self.env.step(action)
+        # except: 
+        #     input(action)
+        #     obs, reward, done, info = self.env.step(action)
+
+
         self.rall += reward
         self.steps += 1
 
@@ -58,9 +68,12 @@ class ActorAgent(object):
             lam=0.95,
             use_gae=True,
             use_cuda=False,
-            use_noisy_net=False):
+            use_noisy_net=False, 
+            use_continuous = False):
         self.model = BaseActorCriticNetwork(
-            input_size, output_size, use_noisy_net)
+            input_size, output_size, use_noisy_net, use_continuous = use_continuous)
+        self.continuous_agent = use_continuous
+        
         self.output_size = output_size
         self.input_size = input_size
         self.gamma = gamma
@@ -74,12 +87,16 @@ class ActorAgent(object):
         self.model = self.model.to(self.device)
 
     def get_action(self, state):
-        state = torch.Tensor(state).to(self.device)
-        state = state.float()
+        # state = torch.Tensor(state).to(self.device).reshape(1,-1)
+        # state = state.float()
+        state = torch.tensor(state).float().reshape(1,-1)
         policy, value = self.model(state)
-        policy = F.softmax(policy, dim=-1).data.cpu().numpy()
 
-        action = np.random.choice(np.arange(self.output_size), p=policy)
+        if self.continuous_agent: 
+            action = policy.sample().numpy().reshape(-1)
+        else: 
+            policy = F.softmax(policy, dim=-1).data.cpu().numpy()
+            action = np.random.choice(np.arange(self.output_size), p=policy)
 
         return action
 
@@ -95,11 +112,15 @@ class ActorAgent(object):
         # update critic
         self.critic_optimizer.zero_grad()
         cur_value = self.model.critic(torch.FloatTensor(s_batch))
+        print('Before opt - Value has nan: {}'.format(torch.sum(torch.isnan(cur_value))))
         discounted_reward, _ = discount_return(reward_batch, done_batch, cur_value.cpu().detach().numpy())
-        # discounted_reward = (discounted_reward - discounted_reward.mean())/(discounted_reward.std() + 1e-8)
+        discounted_reward = (discounted_reward - discounted_reward.mean())/(discounted_reward.std() + 1e-8)
         for _ in range(critic_update_iter):
             sample_idx = random.sample(range(data_len), 256)
             sample_value = self.model.critic(torch.FloatTensor(s_batch[sample_idx]))
+            if(torch.sum(torch.isnan(sample_value)) > 0): 
+                print('NaN in value prediction')
+                input()
             critic_loss = mse(sample_value.squeeze(), torch.FloatTensor(discounted_reward[sample_idx]))
             critic_loss.backward()
             self.critic_optimizer.step()
@@ -107,22 +128,34 @@ class ActorAgent(object):
 
         # update actor
         cur_value = self.model.critic(torch.FloatTensor(s_batch))
+        print('After opt - Value has nan: {}'.format(torch.sum(torch.isnan(cur_value))))
         discounted_reward, adv = discount_return(reward_batch, done_batch, cur_value.cpu().detach().numpy())
+        print('Advantage has nan: {}'.format(torch.sum(torch.isnan(torch.tensor(adv).float()))))
+        print('Returns has nan: {}'.format(torch.sum(torch.isnan(torch.tensor(discounted_reward).float()))))
         # adv = (adv - adv.mean()) / (adv.std() + 1e-8)
         self.actor_optimizer.zero_grad()
         for _ in range(actor_update_iter):
             sample_idx = random.sample(range(data_len), 256)
+            weight = torch.tensor(np.minimum(np.exp(adv[sample_idx] / beta), max_weight)).float().reshape(-1,1)
             cur_policy = self.model.actor(torch.FloatTensor(s_batch[sample_idx]))
-            m = Categorical(F.softmax(cur_policy, dim=-1))
+            
+            if self.continuous_agent: 
+                probs = -cur_policy.log_probs(torch.tensor(action_batch[sample_idx]).float())
+                actor_loss = probs * weight
+            else: 
+                m = Categorical(F.softmax(cur_policy, dim=-1))
+                actor_loss = -m.log_prob(torch.LongTensor(action_batch[sample_idx])) * weight.reshape(-1)
 
-            weight = np.minimum(np.exp(adv[sample_idx] / beta), max_weight)
 
-            actor_loss = -m.log_prob(torch.LongTensor(action_batch[sample_idx])) * torch.FloatTensor(weight)
             actor_loss = actor_loss.mean()
+            # print(actor_loss)
+
 
             actor_loss.backward()
             self.actor_optimizer.step()
             self.actor_optimizer.zero_grad()
+
+        print('Weight has nan {}'.format(torch.sum(torch.isnan(weight))))
 
 
 def discount_return(reward, done, value):
@@ -146,10 +179,18 @@ def discount_return(reward, done, value):
 
 
 if __name__ == '__main__':
-    env_id = 'CartPole-v1'
+    # env_id = 'CartPole-v1'
+    env_id = 'Pendulum-v0'
+    # env_id = 'Acrobot-v1'
+    # env_id = 'BipedalWalker-v2'
+
     env = gym.make(env_id)
+
+    continuous = isinstance(env.action_space, gym.spaces.Box)
+    print('Env is continuous: {}'.format(continuous))
+
     input_size = env.observation_space.shape[0]  # 4
-    output_size = env.action_space.n  # 2
+    output_size = env.action_space.shape[0] if continuous else env.action_space.n  # 2
     env.close()
 
     use_cuda = False
@@ -173,10 +214,11 @@ if __name__ == '__main__':
         gamma,
         use_gae=use_gae,
         use_cuda=use_cuda,
-        use_noisy_net=use_noisy_net)
+        use_noisy_net=use_noisy_net, 
+        use_continuous=continuous)
     is_render = False
 
-    env = CartPoleEnvironment(env_id, is_render)
+    env = RLEnv(env_id, is_render)
 
     states, actions, rewards, next_states, dones = deque(maxlen=max_replay), deque(maxlen=max_replay), deque(
         maxlen=max_replay), deque(maxlen=max_replay), deque(maxlen=max_replay)
@@ -194,7 +236,9 @@ if __name__ == '__main__':
         while True:
             step += 1
             action = agent.get_action(state)
-
+            if(torch.sum(torch.isnan(torch.tensor(action).float()))): 
+                print(action)
+                action = np.zeros_like(action)
             next_state, reward, done, info = env.step(action)
             states.append(np.array(state))
             actions.append(action)
